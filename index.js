@@ -297,8 +297,8 @@ controls.minPolarAngle = Math.PI / 6;
 controls.maxPolarAngle = Math.PI / 2.2;
 applyDeskCamera();
 
-const IDLE_ORBIT_AMPLITUDE = 0.4;
-const IDLE_ORBIT_SPEED = 0.003;
+const IDLE_ORBIT_AMPLITUDE = 0.22;
+const IDLE_ORBIT_SPEED = 0.004;
 
 let idleOrbit = true;
 let idleTime = 0;
@@ -679,11 +679,135 @@ const CALCULATOR_SIZE = 1.3;
 const CALCULATOR_POSITION = { x: -2.7, y: 0, z: 1.2 };
 const CALCULATOR_ROTATION_Y = Math.PI / 3;
 const FILM_CAMERA_SIZE = 1.6;
-const FILM_CAMERA_POSITION = { x: -4.2, y: 0, z: 0.85 };
+const FILM_CAMERA_POSITION = { x: -4, y: 0, z: -1 };
 const FILM_CAMERA_ROTATION_Y = Math.PI / 2.7;
-const FRAME_SIZE = 1.35;
-const FRAME_POSITION = { x: -3.9, y: 0, z: -1.2 };
-const FRAME_ROTATION_Y = 18;
+const DESK_PHOTO_POSITION = { x: -4.3, y: 0.002, z: -0.3 };
+
+
+const deskPhotoLoader = new THREE.TextureLoader();
+const deskPhotoGeometries = new Map();
+const IMAGES_DIR = "./images/";
+
+// Move the whole fan on the desk
+
+// Scale all photos — increase to make them bigger
+const DESK_PHOTO_SIZE_SCALE = 1.25;
+
+const DESK_PHOTO_FLARE = {
+  arc: Math.PI / 1.3,
+  baseRadius: 0.15,
+  stepRadius: 0.3,
+  yStep: 0.002,
+};
+
+const DESK_PHOTO_FILES = [
+  { file: "image1.jpeg", width: 0.5, aspect: 768 / 1024, angleOffset: 1.2 },
+  { file: "image2.jpeg", width: 0.65, aspect: 1280/960, positionOffset:{x:0.05,z:0.1}, distOffset: 0.18, angleOffset: 0 },
+  { file: "image3.jpeg", width: 0.5, aspect: 1536 / 2048, positionOffset: { x: -0.28, y: 0.004, z: 0.4 }, distOffset: 0.32, angleOffset: 0.14 },
+  {
+    file: "image5.jpeg",
+    width: 0.65,
+    aspect: 1024 / 768,
+    alignIndex: 3,
+    positionOffset: { x: -0.28, y: 0.004, z: 0.01 },
+    order: 5,
+  },
+  {
+    file: "image6.jpeg",
+    width: 0.5,
+    aspect: 1536 / 2048,
+    alignIndex: 3,
+    positionOffset: { x: 0.1, y: 0, z: 0.54 },
+    rotationOffset: 0.3,
+    order: 4,
+  },
+];
+
+function buildDeskPhotoFlare() {
+  const count = DESK_PHOTO_FILES.length;
+  return DESK_PHOTO_FILES.map((photo, i) => {
+    const alignIndex = photo.alignIndex ?? i;
+    const t = count === 1 ? 0.5 : alignIndex / (count - 1);
+    const angle = (t - 0.5) * DESK_PHOTO_FLARE.arc + (photo.angleOffset ?? 0);
+    const dist =
+      DESK_PHOTO_FLARE.baseRadius +
+      alignIndex * DESK_PHOTO_FLARE.stepRadius +
+      (photo.distOffset ?? 0);
+    const width = photo.width * DESK_PHOTO_SIZE_SCALE;
+
+    return {
+      src: `${IMAGES_DIR}${photo.file}`,
+      width,
+      height: width / photo.aspect,
+      position: {
+        x:
+          DESK_PHOTO_POSITION.x +
+          Math.sin(angle) * dist +
+          (photo.positionOffset?.x ?? 0),
+        y:
+          DESK_PHOTO_POSITION.y +
+          i * DESK_PHOTO_FLARE.yStep +
+          (photo.positionOffset?.y ?? 0),
+        z:
+          DESK_PHOTO_POSITION.z +
+          Math.cos(angle) * dist +
+          (photo.positionOffset?.z ?? 0),
+      },
+      rotationY: angle + (photo.rotationOffset ?? 0),
+      order: photo.order ?? i,
+    };
+  });
+}
+
+const DESK_PHOTOS = buildDeskPhotoFlare();
+
+function getDeskPhotoGeometry(width, height) {
+  const key = `${width}x${height}`;
+  if (!deskPhotoGeometries.has(key)) {
+    deskPhotoGeometries.set(key, new THREE.PlaneGeometry(width, height));
+  }
+  return deskPhotoGeometries.get(key);
+}
+
+function placeDeskPhoto({ src, width, height, position, rotationY = 0, order = 0 }) {
+  deskPhotoLoader.load(
+    src,
+    (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+
+      const photo = new THREE.Mesh(
+        getDeskPhotoGeometry(width, height),
+        new THREE.MeshStandardMaterial({
+          map: texture,
+          roughness: 0.9,
+          metalness: 0,
+          side: THREE.DoubleSide,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: order,
+          depthWrite: true,
+        })
+      );
+      photo.rotation.x = -Math.PI / 2;
+      photo.renderOrder = order;
+      photo.castShadow = order === 0;
+      photo.receiveShadow = true;
+
+      const mount = new THREE.Group();
+      mount.position.set(position.x, DESK_TOP_Y + position.y, position.z);
+      mount.rotation.y = rotationY;
+      mount.renderOrder = order;
+      mount.add(photo);
+      scene.add(mount);
+    },
+    undefined,
+    (err) => console.error(`Failed to load desk photo (${src}):`, err)
+  );
+}
+
+function loadDeskPhotos() {
+  DESK_PHOTOS.forEach(placeDeskPhoto);
+}
 
 function loadPhoneCharger() {
   loadDeskModel(
@@ -859,16 +983,6 @@ function loadFilmCamera() {
   );
 }
 
-function loadPhotoFrame() {
-  loadDeskModel(
-    "./models/photo_frame.glb",
-    FRAME_SIZE,
-    FRAME_POSITION,
-    "photo frame",
-    FRAME_ROTATION_Y
-  );
-}
-
 // Lighting setup
 const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
 scene.add(hemiLight);
@@ -973,7 +1087,7 @@ loadNotebookAndPen();
 loadPhoneCharger();
 loadCalculator();
 loadFilmCamera();
-loadPhotoFrame();
+loadDeskPhotos();
 
 renderer.domElement.style.cursor = "default";
 renderer.domElement.addEventListener("mousemove", (e) => {
